@@ -1118,6 +1118,11 @@ opswitch:
 	case ORECV:
 		Fatalf("walkexpr ORECV") // should see inside OAS only
 
+	case OSLICEHEADER:
+		n.Left = walkexpr(n.Left, init)
+		n.List.SetFirst(walkexpr(n.List.First(), init))
+		n.List.SetSecond(walkexpr(n.List.Second(), init))
+
 	case OSLICE, OSLICEARR, OSLICESTR, OSLICE3, OSLICE3ARR:
 		n.Left = walkexpr(n.Left, init)
 		low, high, max := n.SliceBounds()
@@ -1339,8 +1344,13 @@ opswitch:
 			}
 
 			fn := syslook(fnname)
-			fn = substArgTypes(fn, t.Elem()) // any-1
-			n = mkcall1(fn, t, init, typename(t.Elem()), conv(len, argtype), conv(cap, argtype))
+			n.Left = mkcall1(fn, types.Types[TUNSAFEPTR], init, typename(t.Elem()), conv(len, argtype), conv(cap, argtype))
+			n.Left.SetNonNil(true)
+			n.List.Set2(conv(len, types.Types[TINT]), conv(cap, types.Types[TINT]))
+			n.Op = OSLICEHEADER
+			n.Type = t
+			n = typecheck(n, Erv)
+			n = walkexpr(n, init)
 		}
 
 	case ORUNESTR:
@@ -3287,6 +3297,14 @@ func walkcompare(n *Node, init *Nodes) *Node {
 	}
 	if expr == nil {
 		expr = nodbool(n.Op == OEQ)
+		// We still need to use cmpl and cmpr, in case they contain
+		// an expression which might panic. See issue 23837.
+		t := temp(cmpl.Type)
+		a1 := nod(OAS, t, cmpl)
+		a1 = typecheck(a1, Etop)
+		a2 := nod(OAS, t, cmpr)
+		a2 = typecheck(a2, Etop)
+		init.Append(a1, a2)
 	}
 	n = finishcompare(n, expr, init)
 	return n
